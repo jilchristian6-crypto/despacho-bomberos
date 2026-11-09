@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full bg-slate-950 text-slate-100 select-none">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Central de Alarma y Despacho Táctico v2.0</title>
+  
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- Leaflet CSS & JS (Mapa Interactivo Táctico) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+    
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #020617; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 99px; }
+    ::-webkit-scrollbar-thumb:hover { background: #334155; }
+
+    /* Efectos Tácticos */
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    
+    /* Animación Alerta Alarma */
+    @keyframes alertFlash {
+      0%, 100% { background-color: rgba(2, 6, 23, 1); }
+      50% { background-color: rgba(153, 27, 27, 0.25); }
+    }
+    .dispatch-alert-active { animation: alertFlash 0.8s infinite; }
+
+    .leaflet-container { background: #090d16 !important; }
+  </style>
+</head>
+<body id="app-body" class="h-full flex flex-col overflow-hidden bg-slate-950 text-slate-100">
+
+  <!-- TOPBAR / BANNER DE ESTADO -->
+  <header class="bg-slate-900/90 border-b border-slate-800/80 px-5 py-3 flex items-center justify-between shrink-0 glass-panel z-20">
+    <div class="flex items-center gap-4">
+      <div class="relative">
+        <div class="bg-red-600/20 p-2.5 rounded-xl border border-red-500/40 shadow-lg shadow-red-950/50">
+          <i data-lucide="siren" class="w-6 h-6 text-red-500 animate-pulse"></i>
+        </div>
+        <span class="absolute -top-1 -right-1 flex h-3 w-3">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+        </span>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-extrabold text-lg tracking-wider text-white uppercase font-mono">CAD-BOMBEROS</h1>
+          <span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-red-950/80 text-red-400 border border-red-800 tracking-widest">SISTEMA CONTROL OPERATIVO</span>
+        </div>
+        <p class="text-xs text-slate-400 flex items-center gap-2">
+          <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          CENTRAL DE ALARMAS & DESPACHO | MODULO TÁCTICO INTEGRADO
+        </p>
+      </div>
+    </div>
+
+    <!-- METRICAS EN VIVO Y RELOJ -->
+    <div class="flex items-center gap-6">
+      <div class="hidden md:flex items-center gap-4 border-r border-slate-800 pr-6">
+        <div class="text-right">
+          <div class="text-[10px] text-slate-400 font-semibold tracking-wider uppercase">Unidades 6-0</div>
+          <div id="stat-disponibles" class="font-mono text-lg font-bold text-emerald-400">0 / 0</div>
+        </div>
+        <div class="text-right">
+          <div class="text-[10px] text-slate-400 font-semibold tracking-wider uppercase">En Servicio (6-3/6-7)</div>
+          <div id="stat-en-servicio" class="font-mono text-lg font-bold text-amber-400">0</div>
+        </div>
+      </div>
+
+      <div class="text-right">
+        <div id="reloj-sistema" class="font-mono text-2xl font-black tracking-wider text-red-500 drop-shadow-[0_0_10px_rgba(239,68,68,0.3)]">00:00:00</div>
+        <div id="fecha-sistema" class="text-[11px] text-slate-400 uppercase tracking-widest font-semibold">---</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- WORKSPACE PRINCIPAL -->
+  <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 overflow-hidden">
+    
+    <!-- COLUMNA IZQUIERDA: Formulario Despacho + Matriz Flota (7 cols) -->
+    <section class="lg:col-span-7 flex flex-col gap-4 overflow-y-auto pr-1">
+      
+      <!-- CARD FORMULARIO DESPACHO -->
+      <div class="glass-panel rounded-2xl p-5 shadow-2xl relative overflow-hidden">
+        <div class="absolute top-0 right-0 w-32 h-32 bg-red-600/5 rounded-full blur-2xl pointer-events-none"></div>
+        
+        <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-800/80">
+          <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2 font-mono">
+            <i data-lucide="radio-receiver" class="text-red-500 w-4 h-4"></i>
+            Emisión de Despacho Táctico
+          </h2>
+          <span class="text-[11px] font-mono text-slate-400 bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800">CLAVE Y UNIDADES</span>
+        </div>
+
+        <form id="form-despacho" class="space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1">Clave de Emergencia</label>
+              <select id="tipo-emergencia" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs font-semibold focus:outline-none focus:border-red-500 text-slate-100 shadow-inner">
+                <option value="10-0 (Incendio Estructural)">10-0 | Incendio Estructural</option>
+                <option value="10-1 (Incendio Vehicular)">10-1 | Incendio Vehicular</option>
+                <option value="10-2 (Incendio Forestal / Pastizal)">10-2 | Incendio Forestal / Pastizal</option>
+                <option value="10-3 (Rescate de Persona)">10-3 | Rescate de Persona</option>
+                <option value="10-4 (Rescate Vehicular)">10-4 | Rescate Vehicular</option>
+                <option value="10-5 (Materiales Peligrosos / Hazmat)">10-5 | Hazmat / Mat-Pel</option>
+                <option value="10-6 (Fuga de Gas)">10-6 | Fuga de Gas / GLP</option>
+                <option value="10-7 (Eléctrico / Cortocircuito)">10-7 | Emergencia Eléctrica</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1">Dirección / Intersección</label>
+              <input type="text" id="direccion-emergencia" placeholder="Ej: Av. Balmaceda / Esmeralda" required class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs font-semibold focus:outline-none focus:border-red-500 text-slate-100 shadow-inner">
+            </div>
+          </div>
+
+          <!-- Selector visual de unidades -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="block text-[11px] font-bold text-slate-300 uppercase tracking-wider">Material Mayor Disponible (6-0)</label>
+              <span class="text-[10px] text-slate-500">Haz clic para marcar</span>
+            </div>
+            <div id="selector-unidades" class="grid grid-cols-3 sm:grid-cols-6 gap-2"></div>
+          </div>
+
+          <div>
+            <label class="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1">Preinforme / Detalles Iniciales</label>
+            <input type="text" id="observaciones-emergencia" placeholder="Ej: Humo denso en segundo piso, peligro de propagación" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-red-500 text-slate-100">
+          </div>
+
+          <div class="flex gap-2 pt-1">
+            <button type="submit" class="flex-1 bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition duration-200 shadow-lg shadow-red-950/80 tracking-wider uppercase font-mono">
+              <i data-lucide="bell-ring" class="w-4 h-4"></i>
+              DESPACHAR UNIDADES Y TOCAR TONOS
+            </button>
+            <button type="button" onclick="probarTonoManual()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-3 rounded-xl text-xs font-semibold flex items-center gap-1 border border-slate-700" title="Probar Tono Radial">
+              <i data-lucide="volume-2" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- CARD MATRIZ DE FLOTA (UNIDADES) -->
+      <div class="glass-panel rounded-2xl p-5 shadow-2xl flex-1 flex flex-col">
+        <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-800/80">
+          <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2 font-mono">
+            <i data-lucide="truck" class="text-red-500 w-4 h-4"></i>
+            Estado de Flota (Material Mayor)
+          </h2>
+          <button onclick="abrirModalAgregarCarro()" class="text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-200 px-2.5 py-1 rounded-lg border border-slate-700 flex items-center gap-1">
+            <i data-lucide="plus" class="w-3 h-3"></i> Agregar Carro
+          </button>
+        </div>
+
+        <div id="matriz-unidades" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 flex-1 overflow-y-auto pr-1"></div>
+      </div>
+
+    </section>
+
+    <!-- COLUMNA DERECHA: Mapa Táctico + Activas + Bitácora (5 cols) -->
+    <section class="lg:col-span-5 flex flex-col gap-4 overflow-y-auto">
+      
+      <!-- MAPA TÁCTICO EN VIVO -->
+      <div class="glass-panel rounded-2xl p-3 shadow-2xl flex flex-col">
+        <div class="flex items-center justify-between mb-2 px-1">
+          <span class="text-xs font-bold text-white uppercase font-mono flex items-center gap-2">
+            <i data-lucide="map" class="text-red-500 w-3.5 h-3.5"></i>
+            Geolocalización Operativa
+          </span>
+          <span class="text-[10px] text-slate-400 font-mono" id="coordenadas-mapa">LAT: -32.84 / LON: -70.96</span>
+        </div>
+        <div id="mapa-tactico" class="w-full h-44 rounded-xl border border-slate-800 shadow-inner z-10"></div>
+      </div>
+
+      <!-- MONITOREO DE EMERGENCIAS ACTIVAS -->
+      <div class="glass-panel rounded-2xl p-4 shadow-2xl">
+        <h2 class="text-xs font-bold text-white uppercase tracking-wider mb-3 flex items-center gap-2 font-mono">
+          <i data-lucide="activity" class="text-red-500 w-4 h-4"></i>
+          Incidentes en Desarrollo
+        </h2>
+        <div id="lista-emergencias-activas" class="space-y-3 max-h-[220px] overflow-y-auto pr-1"></div>
+      </div>
+
+      <!-- BITÁCORA DIGITAL DE NOVEDADES -->
+      <div class="glass-panel rounded-2xl p-4 shadow-2xl flex-1 flex flex-col min-h-[240px]">
+        <div class="flex items-center justify-between mb-3 pb-2 border-b border-slate-800/80">
+          <h2 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2 font-mono">
+            <i data-lucide="clipboard-list" class="text-red-500 w-4 h-4"></i>
+            Libro de Novedades Digital
+          </h2>
+          <button onclick="exportarBitacoraCSV()" class="text-[10px] bg-emerald-950/80 hover:bg-emerald-900 text-emerald-400 px-2 py-1 rounded border border-emerald-800 flex items-center gap-1 font-mono">
+            <i data-lucide="download" class="w-3 h-3"></i> Exportar CSV
+          </button>
+        </div>
+
+        <div id="bitacora-eventos" class="flex-1 max-h-[200px] overflow-y-auto space-y-2 pr-1 font-mono text-[11px]"></div>
+      </div>
+
+    </section>
+  </main>
+
+  <script>
+    const FLOTA_DEFAULT = [
+      { id: 'B-1', nombre: 'Bomba 1ª Cía', estado: '6-0', tipo: 'Bomba Urban' },
+      { id: 'R-1', nombre: 'Rescate 1ª Cía', estado: '6-0', tipo: 'Rescate Pesado' },
+      { id: 'BX-1', nombre: 'Bomba Nodriza 1ª', estado: '6-0', tipo: 'Cisterna / Agua' },
+      { id: 'B-2', nombre: 'Bomba 2ª Cía', estado: '6-0', tipo: 'Bomba Forestal' },
+      { id: 'Z-1', nombre: 'Cisterna 2ª Cía', estado: '6-0', tipo: 'Abastecimiento' },
+      { id: 'K-1', nombre: 'Comandancia', estado: '6-0', tipo: 'Unidad de Mando' }
+    ];
+
+    let unidades = JSON.parse(localStorage.getItem('cad_unidades')) || FLOTA_DEFAULT;
+    let emergenciasActivas = JSON.parse(localStorage.getItem('cad_emergencias')) || [];
+    let bitacora = JSON.parse(localStorage.getItem('cad_bitacora')) || [];
+
+    let mapa;
+    let marcadoresMapa = [];
+
+    function reproducirTonoAlarma(tipoClave = '10-0') {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        osc.type = tipoClave.includes('10-4') || tipoClave.includes('10-3') ? 'triangle' : 'sawtooth';
+        
+        const ahora = audioCtx.currentTime;
+        osc.frequency.setValueAtTime(950, ahora);
+        osc.frequency.setValueAtTime(650, ahora + 0.25);
+        osc.frequency.setValueAtTime(950, ahora + 0.5);
+        osc.frequency.setValueAtTime(650, ahora + 0.75);
+        osc.frequency.setValueAtTime(1100, ahora + 1.0);
+
+        gain.gain.setValueAtTime(0.4, ahora);
+        gain.gain.exponentialRampToValueAtTime(0.001, ahora + 1.8);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start();
+        osc.stop(ahora + 1.8);
+
+        const body = document.getElementById('app-body');
+        body.classList.add('dispatch-alert-active');
+        setTimeout(() => body.classList.remove('dispatch-alert-active'), 2500);
+
+      } catch (e) {
+        console.log("Audio interactivo aguardando evento.");
+      }
+    }
+
+    function probarTonoManual() {
+      reproducirTonoAlarma('10-0');
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      lucide.createIcons();
+      iniciarReloj();
+      iniciarMapaTáctico();
+      renderizarTodo();
+
+      document.getElementById('form-despacho').addEventListener('submit', (e) => {
+        e.preventDefault();
+        emitirDespacho();
+      });
+    });
+
+    // MAPA TÁCTICO CENTRADO EN LLAY-LLAY CON ZOOM TÁCTICO DE CALLES
+    function iniciarMapaTáctico() {
+      mapa = L.map('mapa-tactico', { zoomControl: false }).setView([-32.8428, -70.9678], 15);
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 16,
+        attribution: '© Esri, HERE, OpenStreetMap'
+      }).addTo(mapa);
+    }
+
+    function iniciarReloj() {
+      setInterval(() => {
+        const ahora = new Date();
+        document.getElementById('reloj-sistema').textContent = ahora.toLocaleTimeString('es-CL');
+        document.getElementById('fecha-sistema').textContent = ahora.toLocaleDateString('es-CL', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+        actualizarCronometros();
+      }, 1000);
+    }
+
+    function emitirDespacho() {
+      const tipo = document.getElementById('tipo-emergencia').value;
+      const direccion = document.getElementById('direccion-emergencia').value;
+      const obs = document.getElementById('observaciones-emergencia').value;
+      
+      const checkboxes = document.querySelectorAll('.checkbox-unidad:checked');
+      const carrosAsignados = Array.from(checkboxes).map(cb => cb.value);
+
+      if (carrosAsignados.length === 0) {
+        alert("⚠️ ATENCIÓN: Debes seleccionar al menos un carro disponible (6-0) para el despacho.");
+        return;
+      }
+
+      reproducirTonoAlarma(tipo);
+
+      carrosAsignados.forEach(idCarro => {
+        const carro = unidades.find(u => u.id === idCarro);
+        if (carro) carro.estado = '6-3';
+      });
+
+      const nuevaEmergencia = {
+        id: Date.now(),
+        tipo,
+        direccion,
+        obs,
+        carros: carrosAsignados,
+        horaInicio: new Date().toISOString(),
+        estado: '6-3 EN TRASLADO'
+      };
+
+      emergenciasActivas.unshift(nuevaEmergencia);
+      
+      registrarBitacora("DESPACHO CRÍTICO", `[${tipo}] en ${direccion}. Unidades despachadas: ${carrosAsignados.join(', ')}`);
+
+      document.getElementById('direccion-emergencia').value = '';
+      document.getElementById('observaciones-emergencia').value = '';
+
+      guardarEstado();
+      renderizarTodo();
+      agregarMarcadorSimuladoMapa(direccion);
+    }
+
+    function cambiarEstadoUnidad(id, nuevoEstado) {
+      const carro = unidades.find(u => u.id === id);
+      if (carro) {
+        const estadoAnterior = carro.estado;
+        carro.estado = nuevoEstado;
+        registrarBitacora("CLAVE RADIAL", `Unidad ${carro.id} reporta cambio de clave: ${estadoAnterior} ➔ ${nuevoEstado}`);
+        guardarEstado();
+        renderizarTodo();
+      }
+    }
+
+    function finalizarEmergencia(id) {
+      const emergencia = emergenciasActivas.find(e => e.id === id);
+      if (emergencia) {
+        emergencia.carros.forEach(idCarro => {
+          const carro = unidades.find(u => u.id === idCarro);
+          if (carro) carro.estado = '6-0';
+        });
+
+        emergenciasActivas = emergenciasActivas.filter(e => e.id !== id);
+        registrarBitacora("TERMINO SERVICIO 6-10", `Incidente finalizado en ${emergencia.direccion}. Carros ${emergencia.carros.join(', ')} retoman 6-0.`);
+
+        guardarEstado();
+        renderizarTodo();
+      }
+    }
+
+    function renderizarTodo() {
+      renderizarUnidades();
+      renderizarSelectorUnidades();
+      renderizarEmergenciasActivas();
+      renderizarBitacora();
+      actualizarEstadisticas();
+      lucide.createIcons();
+    }
+
+    function renderizarUnidades() {
+      const contenedor = document.getElementById('matriz-unidades');
+      contenedor.innerHTML = '';
+
+      unidades.forEach(u => {
+        const configEstado = {
+          '6-0': { badge: 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400', label: '6-0 DISPONIBLE' },
+          '6-3': { badge: 'bg-amber-500/10 border-amber-500/40 text-amber-400 animate-pulse', label: '6-3 EN RUTA' },
+          '6-7': { badge: 'bg-red-500/10 border-red-500/40 text-red-400', label: '6-7 EN LA ESCENA' },
+          '6-10': { badge: 'bg-slate-800 border-slate-700 text-slate-400', label: '6-10 FUERA CUARTEL' }
+        }[u.estado] || { badge: 'bg-slate-800 text-slate-400', label: u.estado };
+
+        contenedor.innerHTML += `
+          <div class="bg-slate-950 border border-slate-800/80 rounded-xl p-3 flex flex-col justify-between hover:border-slate-700 transition">
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <span class="font-extrabold text-white text-base font-mono">${u.id}</span>
+                <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${configEstado.badge}">
+                  ${configEstado.label}
+                </span>
+              </div>
+              <p class="text-[11px] text-slate-400 font-medium">${u.nombre}</p>
+              <span class="text-[9px] text-slate-500 font-mono">${u.tipo}</span>
+            </div>
+
+            <div class="flex gap-1 mt-3 pt-2 border-t border-slate-900">
+              <button onclick="cambiarEstadoUnidad('${u.id}', '6-0')" class="flex-1 text-[10px] font-bold font-mono bg-slate-900 hover:bg-slate-800 text-emerald-400 py-1 rounded border border-slate-800">6-0</button>
+              <button onclick="cambiarEstadoUnidad('${u.id}', '6-7')" class="flex-1 text-[10px] font-bold font-mono bg-slate-900 hover:bg-slate-800 text-red-400 py-1 rounded border border-slate-800">6-7</button>
+              <button onclick="cambiarEstadoUnidad('${u.id}', '6-10')" class="flex-1 text-[10px] font-bold font-mono bg-slate-900 hover:bg-slate-800 text-slate-400 py-1 rounded border border-slate-800">6-10</button>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    function renderizarSelectorUnidades() {
+      const contenedor = document.getElementById('selector-unidades');
+      contenedor.innerHTML = '';
+
+      unidades.forEach(u => {
+        const disponible = u.estado === '6-0';
+        contenedor.innerHTML += `
+          <label class="flex items-center justify-center gap-1.5 p-2 rounded-xl border transition ${disponible ? 'border-slate-800 bg-slate-950 cursor-pointer hover:border-red-500/50' : 'border-slate-900 bg-slate-950/40 opacity-30 cursor-not-allowed'}">
+            <input type="checkbox" value="${u.id}" ${!disponible ? 'disabled' : ''} class="checkbox-unidad rounded bg-slate-900 border-slate-700 text-red-600 focus:ring-0">
+            <span class="text-xs font-bold font-mono ${disponible ? 'text-white' : 'text-slate-500'}">${u.id}</span>
+          </label>
+        `;
+      });
+    }
+
+    function renderizarEmergenciasActivas() {
+      const contenedor = document.getElementById('lista-emergencias-activas');
+      contenedor.innerHTML = '';
+
+      if (emergenciasActivas.length === 0) {
+        contenedor.innerHTML = `<div class="p-6 text-center text-xs text-slate-500 italic bg-slate-950/50 rounded-xl border border-slate-900">No hay emergencias en desarrollo en este momento.</div>`;
+        return;
+      }
+
+      emergenciasActivas.forEach(e => {
+        contenedor.innerHTML += `
+          <div class="bg-slate-950 border border-red-500/30 rounded-xl p-3 shadow-lg">
+            <div class="flex justify-between items-start mb-1">
+              <span class="font-bold text-red-400 text-xs font-mono uppercase">${e.tipo}</span>
+              <span id="cronometro-${e.id}" class="text-[11px] font-mono font-bold bg-red-950 text-red-300 px-2 py-0.5 rounded border border-red-800">00:00</span>
+            </div>
+            <p class="text-xs text-slate-200 font-semibold mb-1 flex items-center gap-1">
+              <i data-lucide="map-pin" class="w-3.5 h-3.5 text-red-500 shrink-0"></i> ${e.direccion}
+            </p>
+            ${e.obs ? `<p class="text-[11px] text-slate-400 italic mb-2">"${e.obs}"</p>` : ''}
+            
+            <div class="flex justify-between items-center pt-2 border-t border-slate-900">
+              <span class="text-[10px] text-slate-400">Carros: <strong class="text-white font-mono">${e.carros.join(', ')}</strong></span>
+              <button onclick="finalizarEmergencia(${e.id})" class="text-[10px] font-bold bg-red-950/60 hover:bg-red-900 text-red-300 px-2.5 py-1 rounded border border-red-800/80 transition">
+                Dar Término (6-10)
+              </button>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    function renderizarBitacora() {
+      const contenedor = document.getElementById('bitacora-eventos');
+      contenedor.innerHTML = '';
+
+      bitacora.forEach(b => {
+        contenedor.innerHTML += `
+          <div class="border-b border-slate-900 pb-1.5 flex gap-2">
+            <span class="text-slate-500 font-bold shrink-0">[${b.hora}]</span>
+            <div>
+              <span class="text-red-400 font-bold">[${b.categoria}]</span>
+              <span class="text-slate-300">${b.mensaje}</span>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    function actualizarCronometros() {
+      emergenciasActivas.forEach(e => {
+        const elem = document.getElementById(`cronometro-${e.id}`);
+        if (elem) {
+          const inicio = new Date(e.horaInicio);
+          const diffSeg = Math.floor((new Date() - inicio) / 1000);
+          const min = String(Math.floor(diffSeg / 60)).padStart(2, '0');
+          const seg = String(diffSeg % 60).padStart(2, '0');
+          elem.textContent = `${min}:${seg}`;
+        }
+      });
+    }
+
+    function actualizarEstadisticas() {
+      const disp = unidades.filter(u => u.estado === '6-0').length;
+      const serv = unidades.filter(u => u.estado === '6-3' || u.estado === '6-7').length;
+      document.getElementById('stat-disponibles').textContent = `${disp} / ${unidades.length}`;
+      document.getElementById('stat-en-servicio').textContent = serv;
+    }
+
+    function registrarBitacora(categoria, mensaje) {
+      const hora = new Date().toLocaleTimeString('es-CL');
+      bitacora.unshift({ hora, categoria, mensaje });
+      if (bitacora.length > 50) bitacora.pop();
+    }
+
+    function guardarEstado() {
+      localStorage.setItem('cad_unidades', JSON.stringify(unidades));
+      localStorage.setItem('cad_emergencias', JSON.stringify(emergenciasActivas));
+      localStorage.setItem('cad_bitacora', JSON.stringify(bitacora));
+    }
+
+    function agregarMarcadorSimuladoMapa(direccion) {
+      const latOffset = (Math.random() - 0.5) * 0.01;
+      const lonOffset = (Math.random() - 0.5) * 0.01;
+      const lat = -32.8428 + latOffset;
+      const lon = -70.9678 + lonOffset;
+
+      const marker = L.marker([lat, lon]).addTo(mapa)
+        .bindPopup(`<b>INCIDENTE ACTIVO</b><br>${direccion}`)
+        .openPopup();
+
+      mapa.panTo([lat, lon]);
+      marcadoresMapa.push(marker);
+    }
+
+    function exportarBitacoraCSV() {
+      let csvContent = "data:text/csv;charset=utf-8,Hora,Categoria,Mensaje\n";
+      bitacora.forEach(row => {
+        csvContent += `"${row.hora}","${row.categoria}","${row.mensaje}"\n`;
+      });
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `bitacora_despacho_${new Date().toISOString().slice(0,10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function abrirModalAgregarCarro() {
+      const id = prompt("Ingrese la sigla del nuevo carro (Ej: B-3, RX-1):");
+      if (!id) return;
+      const nombre = prompt("Ingrese nombre de la unidad (Ej: Bomba Tercera Compañía):");
+      if (!nombre) return;
+
+      unidades.push({ id, nombre: nombre || id, estado: '6-0', tipo: 'Unidad Adicional' });
+      registrarBitacora("FLOTA", `Nueva unidad incorporada al sistema: ${id}`);
+      guardarEstado();
+      renderizarTodo();
+    }
+  </script>
+</body>
+</html>
